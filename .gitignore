@@ -1,0 +1,12 @@
+# Variables de entorno
+.venv
+.vscode
+.env
+
+# Distribucion
+reports
+logs.log
+*.bat
+
+# Cache
+**__pycache__
