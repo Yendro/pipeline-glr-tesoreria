@@ -57,7 +57,7 @@ CATEGORIAS_FORMATO = {
     # },
     "texto": {
         "columna": [
-            "Asesor", "Banco", "BeneficiarioSTP", "Concepto", "ConceptoIngreso", "ConceptoPago", "Desarrollo", "Equipo", "Estatus", "Etapa", "Folio", "FormaPago", "Marca", "NombreCompletoCliente",  "Unidad", "UsuarioRegistro", "id_Desarrollo"
+            "Asesor", "Banco", "BeneficiarioSTP", "Concepto", "ConceptoIngreso", "ConceptoPago", "Desarrollo", "Equipo", "Estatus", "Etapa", "Folio", "FormaPago", "Marca", "NombreCompletoCliente", "Privada",  "Unidad", "UsuarioRegistro", "id_Desarrollo"
         ],
         "formato_excel": '@',
     },
@@ -227,38 +227,124 @@ def crear_excel_con_formato(df: pd.DataFrame, output_path: Path, nombre_consulta
         logger.error(f"Error creando Excel con formato: {str(e)}")
         return False
 
+def generar_reportes_ingresos(df: pd.DataFrame, carpeta_reporte: Path) -> Dict[str, Path]:
+    """
+    Genera tres reportes específicos a partir del DataFrame de Ingresos-GAIA.
+
+    Args:
+        df: DataFrame original con los datos de ingresos (incluye mes actual y anterior).
+        carpeta_reporte: Carpeta donde se guardarán los archivos.
+
+    Returns:
+        Diccionario con nombres de reporte y rutas de archivos generados.
+    """
+    resultados = {}
+
+    # Asegurar que la columna de fecha sea datetime
+    if 'FechaIngreso' in df.columns:
+        df['FechaIngreso'] = pd.to_datetime(df['FechaIngreso'], errors='coerce')
+    else:
+        logger.error("La columna 'FechaIngreso' no existe en el DataFrame")
+        return resultados
+
+    # --- 1. Ingresos-GAIA: solo mes actual ---
+    hoy = datetime.now()
+    inicio_mes_actual = pd.Timestamp(hoy.year, hoy.month, 1)
+    fin_mes_actual = inicio_mes_actual + pd.DateOffset(months=1)  # primer día del próximo mes
+
+    mask_mes_actual = (df['FechaIngreso'] >= inicio_mes_actual) & (df['FechaIngreso'] < fin_mes_actual)
+    df_mes_actual = df[mask_mes_actual].copy()
+
+    if not df_mes_actual.empty:
+        nombre_reporte = "Ingresos-GAIA"
+        output_path = carpeta_reporte / f"{nombre_reporte}.xlsx"
+        if crear_excel_con_formato(df_mes_actual, output_path, nombre_reporte):
+            resultados[nombre_reporte] = output_path
+            logger.info(f"✓ Generado {nombre_reporte}.xlsx ({len(df_mes_actual)} filas)")
+        else:
+            logger.warning(f"⚠ No se pudo generar {nombre_reporte}.xlsx")
+    else:
+        logger.warning(f"No hay datos para el mes actual en Ingresos-GAIA")
+
+    # --- 2. IngresosStripe-GAIA: mes actual y anterior, filtrando FormaPago = 'Stripe' ---
+    if 'FormaPago' in df.columns:
+        mask_stripe = df['FormaPago'].str.strip().str.lower() == 'stripe'
+        df_stripe = df[mask_stripe].copy()
+        if not df_stripe.empty:
+            nombre_reporte = "IngresosStripe-GAIA"
+            output_path = carpeta_reporte / f"{nombre_reporte}.xlsx"
+            if crear_excel_con_formato(df_stripe, output_path, nombre_reporte):
+                resultados[nombre_reporte] = output_path
+                logger.info(f"✓ Generado {nombre_reporte}.xlsx ({len(df_stripe)} filas)")
+            else:
+                logger.warning(f"⚠ No se pudo generar {nombre_reporte}.xlsx")
+        else:
+            logger.warning("No hay datos con FormaPago = 'Stripe' en IngresosStripe-GAIA")
+    else:
+        logger.error("La columna 'FormaPago' no existe en el DataFrame")
+
+    # --- 3. IngresosFiltrados-GAIA: desarrollos específicos con privadas ---
+    if 'Desarrollo' in df.columns and 'Privada' in df.columns:
+        mask_desarrollo = (
+            ((df['Desarrollo'].str.strip() == 'Paseo Henequen') & (df['Privada'].str.strip() == 'P8')) |
+            ((df['Desarrollo'].str.strip() == 'Jardines De La Hacienda') & (df['Privada'].str.strip() == 'P29')) |
+            ((df['Marca'].str.strip() == 'Custo'))
+        ) 
+        df_filtrado = df[mask_desarrollo].copy()
+        if not df_filtrado.empty:
+            nombre_reporte = "IngresosFiltrados-GAIA"
+            output_path = carpeta_reporte / f"{nombre_reporte}.xlsx"
+            if crear_excel_con_formato(df_filtrado, output_path, nombre_reporte):
+                resultados[nombre_reporte] = output_path
+                logger.info(f"✓ Generado {nombre_reporte}.xlsx ({len(df_filtrado)} filas)")
+            else:
+                logger.warning(f"⚠ No se pudo generar {nombre_reporte}.xlsx")
+        else:
+            logger.warning("No hay datos que cumplan las condiciones para el reporte de desarrollos")
+    else:
+        logger.error("Las columnas 'Desarrollo' o 'Privada' no existen en el DataFrame")
+
+    return resultados
 
 def procesar_bigquery_dataframe(dataframes_dict: Dict[str, pd.DataFrame]) -> Tuple[Dict[str, Path], Path]:
     """
     Procesar múltiples DataFrames y guardar cada uno en archivo Excel con formato.
-    
+    Para la consulta 'Ingresos-GAIA', se generan tres reportes especiales.
+
     Returns:
         Tuple[Dict[str, Path], Path]: Resultados y carpeta de reporte
     """
     carpeta_reporte = crear_carpeta_reporte()
     logger.info(f"Carpeta de reporte: {carpeta_reporte}")
-    
+
     resultados = {}
-    
+
     for nombre_consulta, df in dataframes_dict.items():
         if df.empty:
             logger.warning(f"DataFrame vacío para {nombre_consulta}")
             continue
-        
-        try:
-            nombre_archivo = f"{nombre_consulta}.xlsx"
-            output_path = carpeta_reporte / nombre_archivo
-            
-            logger.info(f"Procesando: {nombre_consulta}")
-            
-            if crear_excel_con_formato(df, output_path, nombre_consulta):
-                resultados[nombre_consulta] = output_path
-                logger.info(f"✓ Guardado con formato: {output_path.name}")
-            else:
-                logger.warning(f"⚠ Guardado sin formato: {output_path.name}")
-                resultados[nombre_consulta] = output_path
-                
-        except Exception as e:
-            logger.error(f"Error procesando {nombre_consulta}: {str(e)}")
-    
+
+        # Caso especial: Ingresos-GAIA
+        if nombre_consulta == "Ingresos-GAIA":
+            logger.info(f"Procesando reportes especiales desde {nombre_consulta}")
+            especiales = generar_reportes_ingresos(df, carpeta_reporte)
+            resultados.update(especiales)
+        else:
+            # Procesamiento estándar: un archivo por consulta
+            try:
+                nombre_archivo = f"{nombre_consulta}.xlsx"
+                output_path = carpeta_reporte / nombre_archivo
+
+                logger.info(f"Procesando: {nombre_consulta}")
+
+                if crear_excel_con_formato(df, output_path, nombre_consulta):
+                    resultados[nombre_consulta] = output_path
+                    logger.info(f"✓ Guardado con formato: {output_path.name}")
+                else:
+                    logger.warning(f"⚠ Guardado sin formato: {output_path.name}")
+                    resultados[nombre_consulta] = output_path
+
+            except Exception as e:
+                logger.error(f"Error procesando {nombre_consulta}: {str(e)}")
+
     return resultados, carpeta_reporte
