@@ -1251,8 +1251,7 @@ WHERE Cliente NOT LIKE '%Prueba%'
     AND Cliente NOT LIKE '%Manivela%'
     AND Cliente NOT LIKE '%Demo%'
     AND Cliente NOT LIKE '%Direccion%'
-    AND fecha_ingreso >= DATE_TRUNC(MONTH, CURRENT_DATE() - INTERVAL 1 MONTH)
-    AND fecha_ingreso < DATE_TRUNC(MONTH, CURRENT_DATE() + INTERVAL 1 MONTH)
+    AND DATE(fecha_ingreso) BETWEEN DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH) AND CURRENT_DATE()
 GROUP BY
     id_venta,
     id,
